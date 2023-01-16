@@ -20,14 +20,7 @@ npm i -S shadowrealm-api
 ## Usage
 ### Po**n**yfill: non-invasive
 ```javascript
-import ShadowRealm from 'shadowrealm-api'
-
-const realm = new ShadowRealm();
-```
-
-### Po**l**yfill: patch up the global object
-```javascript
-import 'shadowrealm-api/dist/polyfill'
+import ShadowRealm from 'tools-shadowrealm-api'
 
 const realm = new ShadowRealm();
 ```

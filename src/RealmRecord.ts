@@ -1,11 +1,13 @@
 import type { GlobalObject, RealmRecord } from './type';
 import type { Utils } from '.';
+import { testMode } from './helpers';
 
 export function createRealmRecord(parentRealmRec: RealmRecord, utils: Utils) {
     const { document } = parentRealmRec.intrinsics;
     const iframe = document.createElement('iframe');
     iframe.name = 'ShadowRealm';
     document.head.appendChild(iframe);
+    (iframe.contentWindow as any).testMode = testMode;
     const createInContext = (iframe.contentWindow as GlobalObject).eval(
         '(' + createRealmRecordInContext.toString() + ')'
     );
@@ -14,7 +16,7 @@ export function createRealmRecord(parentRealmRec: RealmRecord, utils: Utils) {
 
 function createRealmRecordInContext(utils: Utils) {
     const win = window;
-    const { Function: RawFunction, Object, Symbol } = win;
+    const { Function: RawFunction, Object, Symbol, testMode } = win as any;
     const { getOwnPropertyNames } = Object;
     const {
         apply,
@@ -34,16 +36,76 @@ function createRealmRecordInContext(utils: Utils) {
         });
     }
 
+    /**
+     * 获取回调函数只能在全局环境下调用的函数，如 setTimeout、setInterval
+     *
+     * @param {string} funcName 函数名称
+     */
+    function getGlobalCtxInvokedCallbackFunc(funcName: string) {
+        return function (func: any) {
+            const originFunc = func;
+            const args = arguments;
+            // 需要在全局下调用的函数
+            const globalCtxInvokedFunc = intrinsics[funcName as any] as any;
+            if (typeof originFunc === 'function') {
+                args[0] = function () {
+                    apply(originFunc, globalObject, arguments);
+                };
+            } else if (typeof originFunc === 'string') {
+                args[0] = () => globalObject.eval(originFunc);
+            }
+            // 全局 window 调用对象可能已经被剔除，需要重置调用对象防止 Illegal invocation
+            return apply(globalCtxInvokedFunc, undefined, args);
+        };
+    }
+
+    const descriptorMap: Record<string, any> = {
+        setTimeout: () => ({
+            configurable: true,
+            enumerable: true,
+            value: getGlobalCtxInvokedCallbackFunc('setTimeout'),
+            writable: true,
+        }),
+        setInterval: () => ({
+            configurable: true,
+            enumerable: true,
+            value: getGlobalCtxInvokedCallbackFunc('setInterval'),
+            writable: true,
+        }),
+        clearTimeout: () => ({
+            configurable: true,
+            enumerable: true,
+            value: (timerId: number) =>
+                apply(intrinsics.clearTimeout, undefined, [timerId]),
+            writable: true,
+        }),
+        clearInterval: () => ({
+            configurable: true,
+            enumerable: true,
+            value: (timerId: number) => {
+                apply(intrinsics.clearInterval, undefined, [timerId]);
+            },
+            writable: true,
+        }),
+    };
+
     // Handle window object
     for (const key of getOwnPropertyNames(win) as any[]) {
         intrinsics[key] = win[key];
         const isReserved = utils.globalReservedProps.indexOf(key) !== -1;
         const descriptor = Object.getOwnPropertyDescriptor(win, key)!;
+        if (!descriptor) continue;
         if (key === 'eval') {
             defineSafeEval();
         } else if (isReserved) {
-            define(globalObject, key, descriptor); // copy to new global object
+            if (descriptorMap[key]) {
+                const desc = descriptorMap[key]();
+                define(globalObject, key, desc);
+            } else {
+                define(globalObject, key, descriptor); // copy to new global object
+            }
         }
+        if (testMode) continue;
         if (descriptor.configurable) {
             delete win[key];
         } else if (descriptor.writable) {

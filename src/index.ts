@@ -9,6 +9,8 @@ import {
 } from './es-module/helpers';
 import type { RealmRecord } from './type';
 
+export { injectTestMode } from './helpers';
+
 export const utils = helpers.assign(
     {
         addEsModuleHelpers,
